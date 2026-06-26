@@ -517,11 +517,6 @@ def _get_rotation(ffprobe, path):
     return 0
 
 
-    if not os.path.exists(path):
-        return False
-    sz = os.path.getsize(path)
-    return sz > 0 if is_img else sz / 1024 >= min_kb
-
 def _is_valid(path, min_kb, is_img=False):
     if not os.path.exists(path):
         return False
@@ -530,6 +525,18 @@ def _is_valid(path, min_kb, is_img=False):
 
 TEN_BIT = {"yuv420p10le","yuv420p10be","yuv422p10le","yuv422p10be",
            "yuv444p10le","yuv444p10be","p010le","p010be"}
+
+# Fields that belong to a "logo option" (quick-switch sub-preset).
+LOGO_OPTION_KEYS = [
+    "logo_image","logo_scale_w","logo_opacity","logo_margin_x","logo_margin_y",
+    "enable_tl","logo_tl","logo_tl_w","logo_tl_op","logo_tl_x","logo_tl_y",
+    "enable_tr","logo_tr","logo_tr_w","logo_tr_op","logo_tr_x","logo_tr_y",
+    "enable_bl","logo_bl","logo_bl_w","logo_bl_op","logo_bl_x","logo_bl_y",
+    "enable_br","logo_br","logo_br_w","logo_br_op","logo_br_x","logo_br_y",
+    "enable_center","center_text","center_size","center_opacity",
+    "text_bottom_left","bottom_left_size","text_top_right","top_right_size",
+    "font_file",
+]
 
 # ==============================================================================
 #  FILTER BUILDERS
@@ -1824,10 +1831,16 @@ class Api:
         try:
             with open(CONFIG_PATH, "r", encoding="utf-8") as f:
                 data = json.load(f)
-            last = data.get("last_preset", "Default")
+            last = data.get("last_preset", list(PRESETS.keys())[0])
+            saved_names = list(data.get("presets", {}).keys())
         except Exception:
-            last = "Default"
+            last = list(PRESETS.keys())[0]
+            saved_names = []
+        # Hardcoded presets first, then user-created ones not already listed
         names = list(PRESETS.keys())
+        for n in saved_names:
+            if n not in names:
+                names.append(n)
         return {"names": names, "last_preset": last}
     def load_preset(self, name):
         """Load preset: ưu tiên từ file lưu, fallback về hardcode."""
@@ -1844,7 +1857,6 @@ class Api:
     def save_config(self, preset_name, cfg_json):
         try:
             cfg = json.loads(cfg_json)
-            # Load file hiện tại nếu có
             try:
                 with open(CONFIG_PATH, "r", encoding="utf-8") as f:
                     data = json.load(f)
@@ -1859,6 +1871,62 @@ class Api:
             return True
         except Exception:
             return False
+
+    # ── Logo quick-options (sub-preset) ──────────────────────────────────────
+
+    def _load_data(self):
+        try:
+            with open(CONFIG_PATH, "r", encoding="utf-8") as f:
+                return json.load(f)
+        except Exception:
+            return {}
+
+    def _save_data(self, data):
+        try:
+            with open(CONFIG_PATH, "w", encoding="utf-8") as f:
+                json.dump(data, f, ensure_ascii=False, indent=2)
+            return True
+        except Exception:
+            return False
+
+    def get_logo_options(self, preset_name):
+        """Trả về danh sách tùy chọn logo của preset hiện tại."""
+        data = self._load_data()
+        opts = data.get("logo_options", {}).get(preset_name, {})
+        return {"names": list(opts.keys()), "options": opts}
+
+    def save_logo_option(self, preset_name, option_name, logo_cfg_json):
+        """Lưu tùy chọn logo (chỉ các key logo) cho preset."""
+        try:
+            full_cfg = json.loads(logo_cfg_json)
+            logo_cfg = {k: full_cfg[k] for k in LOGO_OPTION_KEYS if k in full_cfg}
+            data = self._load_data()
+            if "logo_options" not in data:
+                data["logo_options"] = {}
+            if preset_name not in data["logo_options"]:
+                data["logo_options"][preset_name] = {}
+            data["logo_options"][preset_name][option_name] = logo_cfg
+            return self._save_data(data)
+        except Exception:
+            return False
+
+    def delete_logo_option(self, preset_name, option_name):
+        """Xóa một tùy chọn logo."""
+        try:
+            data = self._load_data()
+            opts = data.get("logo_options", {}).get(preset_name, {})
+            if option_name in opts:
+                del opts[option_name]
+                data.setdefault("logo_options", {})[preset_name] = opts
+                return self._save_data(data)
+            return False
+        except Exception:
+            return False
+
+    def load_logo_option(self, preset_name, option_name):
+        """Trả về logo cfg của một option cụ thể."""
+        data = self._load_data()
+        return data.get("logo_options", {}).get(preset_name, {}).get(option_name, {})
 
     def get_ffmpeg_log_since(self, offset):
         lines = _ffmpeg_log_lines
