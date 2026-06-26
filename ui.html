@@ -170,31 +170,25 @@ input[type=range]:hover::-webkit-slider-thumb{box-shadow:0 0 6px var(--acglow)}
 .hs-pill .sw::after{width:8px;height:8px;top:3px;left:3px}
 .hs-pill .sw.on::after{left:15px}
 
-/* ── Logo quick-options ── */
-.qopt-bar{background:rgba(255,140,66,.06);border:1px solid rgba(255,140,66,.18);
-  border-radius:var(--r);padding:7px 9px;margin-bottom:7px}
-.qopt-title{font-size:10px;font-weight:700;color:var(--ora);letter-spacing:.5px;
-  text-transform:uppercase;margin-bottom:6px;display:flex;align-items:center;gap:5px}
-.qopt-title::before{content:"";width:2px;height:10px;background:var(--ora);border-radius:2px}
-.qopt-pills{display:flex;flex-wrap:wrap;gap:4px;min-height:22px}
-.qopt-pill{display:flex;align-items:center;gap:3px;background:var(--field);
-  border:1px solid var(--line2);border-radius:14px;padding:2px 9px 2px 8px;
-  font-size:11px;color:var(--tx2);cursor:pointer;user-select:none;transition:.12s}
-.qopt-pill:hover{color:var(--ora);border-color:var(--ora);background:rgba(255,140,66,.08)}
-.qopt-pill.active{color:var(--ora);border-color:var(--ora);background:rgba(255,140,66,.12);font-weight:600}
-.qopt-pill .del{font-size:9px;color:var(--tx3);margin-left:3px;padding:1px 2px;border-radius:3px;
-  line-height:1;cursor:pointer}
-.qopt-pill .del:hover{color:var(--red);background:rgba(255,95,114,.15)}
-.qopt-new{display:flex;gap:4px;margin-top:6px}
-.qopt-new input{flex:1;background:var(--field);border:1px solid var(--line);
-  border-radius:var(--r2);padding:3px 7px;color:var(--tx);font-size:11px;
-  outline:none;font-family:inherit}
-.qopt-new input:focus{border-color:var(--ora)}
-.qopt-new button{background:rgba(255,140,66,.12);border:1px solid rgba(255,140,66,.3);
-  border-radius:var(--r2);color:var(--ora);padding:0 10px;font-size:11px;
-  cursor:pointer;font-family:inherit;white-space:nowrap;transition:.12s}
-.qopt-new button:hover{background:rgba(255,140,66,.22)}
-.qopt-empty{font-size:10px;color:var(--tx3);font-style:italic}
+/* ── Option topbar (always-visible) ── */
+.opt-sep{width:1px;height:18px;background:var(--line2);margin:0 4px}
+.opt-wrap{display:flex;align-items:center;gap:4px}
+.opt-wrap label{font-size:10px;color:var(--tx3);text-transform:uppercase;font-weight:600;white-space:nowrap}
+#optSel{background:var(--panel2);border:1px solid var(--line);border-radius:20px;
+  padding:3px 9px;color:var(--tx);font-size:11px;outline:none;cursor:pointer;max-width:130px}
+#optSel option{background:var(--panel2)}
+.opt-add{display:flex;align-items:center;gap:0;border:1px solid var(--line);
+  border-radius:20px;overflow:hidden;height:24px}
+.opt-add input{background:var(--panel2);border:none;padding:0 8px;color:var(--tx);
+  font-size:11px;outline:none;width:100px;font-family:inherit}
+.opt-add input::placeholder{color:var(--tx3)}
+.opt-add button{background:rgba(255,140,66,.15);border:none;border-left:1px solid var(--line);
+  color:var(--ora);padding:0 9px;font-size:11px;cursor:pointer;height:100%;
+  font-family:inherit;white-space:nowrap;transition:.12s}
+.opt-add button:hover{background:rgba(255,140,66,.28)}
+.opt-del{background:transparent;border:1px solid transparent;border-radius:20px;
+  color:var(--tx3);padding:2px 6px;font-size:11px;cursor:pointer;transition:.12s}
+.opt-del:hover{color:var(--red);border-color:rgba(255,95,114,.3)}
 
 /* ── Content area ── */
 .content{display:flex;flex-direction:column;flex:1;overflow:hidden;background:var(--bg)}
@@ -302,10 +296,28 @@ input[type=range]:hover::-webkit-slider-thumb{box-shadow:0 0 6px var(--acglow)}
     <div class="name">Watermark Studio</div>
     <div class="ver">v7</div>
   </div>
+
+  <!-- Preset selector -->
   <div style="display:flex;align-items:center;gap:5px;margin-left:6px">
     <label style="font-size:10px;color:var(--tx3);text-transform:uppercase;font-weight:600">Preset</label>
     <select id="presetSel" onchange="applyPreset()"></select>
   </div>
+
+  <!-- Option selector (always visible) -->
+  <div class="opt-sep"></div>
+  <div class="opt-wrap">
+    <label>Option</label>
+    <select id="optSel" onchange="applyOptionFromSel()">
+      <option value="">— chọn —</option>
+    </select>
+    <button class="opt-del" id="optDelBtn" onclick="deleteCurrentOption()" title="Xóa option" style="display:none">✕</button>
+    <div class="opt-add">
+      <input id="optName" placeholder="Tên option…" maxlength="30"
+        onkeydown="if(event.key==='Enter')saveOption()">
+      <button onclick="saveOption()">💾 Lưu</button>
+    </div>
+  </div>
+
   <div class="pipeline-tag">overlay_cuda AUTO</div>
   <div class="grow"></div>
   <div class="tbtn" onclick="openFflog()">📋 Log</div>
@@ -396,19 +408,6 @@ input[type=range]:hover::-webkit-slider-thumb{box-shadow:0 0 6px var(--acglow)}
 
   <!-- ── Tab 1: Logo ── -->
   <div class="tab-body" id="tab1">
-
-    <!-- ── Quick logo options ── -->
-    <div class="qopt-bar" id="qoptBar">
-      <div class="qopt-title">⚡ Tùy chọn logo nhanh</div>
-      <div class="qopt-pills" id="qoptPills">
-        <span class="qopt-empty">Chưa có option nào</span>
-      </div>
-      <div class="qopt-new">
-        <input id="qoptName" placeholder="Tên option mới…" maxlength="30"
-          onkeydown="if(event.key==='Enter')saveLogoOption()">
-        <button onclick="saveLogoOption()">💾 Lưu</button>
-      </div>
-    </div>
 
     <!-- HS preset pill -->
     <div class="hs-pill" onclick="toggleHs()">
@@ -1128,7 +1127,7 @@ async function applyPreset(){
   const cfg=await pywebview.api.load_preset(name);
   if(cfg)applyConfig(cfg);
   _activeOpt='';
-  await refreshLogoOptions();
+  await refreshOptions();
   log('Nạp preset: '+name,'ok');
 }
 async function saveConfig(){
@@ -1137,81 +1136,61 @@ async function saveConfig(){
   log(ok?'✓ Lưu preset: '+name:'✗ Lưu thất bại',ok?'ok':'err');
 }
 
-// ── Logo quick-options ─────────────────────────────────────────────────────
+// ── Options (full-config sub-presets) ─────────────────────────────────────
 let _activeOpt='';
-
 function _currentPreset(){return $('presetSel').value||'';}
 
-async function refreshLogoOptions(){
-  const res=await pywebview.api.get_logo_options(_currentPreset());
-  const pills=$('qoptPills');pills.innerHTML='';
-  if(!res||!res.names.length){
-    pills.innerHTML='<span class="qopt-empty">Chưa có option nào — nhập tên rồi bấm 💾 Lưu</span>';
-    return;
-  }
-  res.names.forEach(name=>{
-    const p=document.createElement('span');
-    p.className='qopt-pill'+(name===_activeOpt?' active':'');
-    p.dataset.name=name;
-    p.onclick=()=>applyLogoOption(name);
-    const lbl=document.createElement('span');lbl.textContent=name;
-    const del=document.createElement('span');del.className='del';del.textContent='✕';
-    del.title='Xóa option này';
-    del.onclick=async e=>{
-      e.stopPropagation();
-      if(!confirm('Xóa option "'+name+'"?'))return;
-      await pywebview.api.delete_logo_option(_currentPreset(),name);
-      if(_activeOpt===name)_activeOpt='';
-      await refreshLogoOptions();
-      log('Đã xóa option: '+name,'warn');
-    };
-    p.appendChild(lbl);p.appendChild(del);
-    pills.appendChild(p);
-  });
+async function refreshOptions(){
+  const sel=$('optSel');
+  const prev=sel.value;
+  sel.innerHTML='<option value="">— chọn —</option>';
+  try{
+    const res=await pywebview.api.get_logo_options(_currentPreset());
+    if(res&&res.names.length){
+      res.names.forEach(n=>{
+        const o=document.createElement('option');
+        o.value=n;o.textContent=n;
+        if(n===_activeOpt||n===prev)o.selected=true;
+        sel.appendChild(o);
+      });
+    }
+  }catch(e){}
+  const hasActive=_activeOpt&&[...$('optSel').options].some(o=>o.value===_activeOpt);
+  $('optDelBtn').style.display=hasActive?'':'none';
 }
 
-async function applyLogoOption(name){
+async function applyOptionFromSel(){
+  const name=$('optSel').value;
+  if(!name){_activeOpt='';$('optDelBtn').style.display='none';return;}
   const cfg=await pywebview.api.load_logo_option(_currentPreset(),name);
   if(!cfg||!Object.keys(cfg).length){log('Option rỗng: '+name,'warn');return;}
-  // Chỉ áp dụng các trường logo
-  if(cfg.logo_image!=null)setV('logoFile',cfg.logo_image);
-  if(cfg.logo_scale_w!=null){setV('logoW',cfg.logo_scale_w);$('logoWVal').textContent=cfg.logo_scale_w;}
-  if(cfg.logo_opacity!=null){const op=cfg.logo_opacity;setV('logoOp',Math.round(op*100));$('logoOpVal').textContent=op.toFixed(2);}
-  if(cfg.logo_margin_x!=null)setV('marginX',cfg.logo_margin_x);
-  if(cfg.logo_margin_y!=null)setV('marginY',cfg.logo_margin_y);
-  if(cfg.font_file!=null)setV('fontFile',cfg.font_file);
-  // 4 góc
-  ['TL','TR','BL','BR'].forEach(uc=>{
-    const lc=uc.toLowerCase();
-    if(cfg['enable_'+lc]!=null)setTgl('tgl'+uc,cfg['enable_'+lc]);
-    if(cfg['logo_'+lc]!=null)setV('logo'+uc,cfg['logo_'+lc]);
-    if(cfg['logo_'+lc+'_w']!=null){setV('logo'+uc+'W',cfg['logo_'+lc+'_w']);$('logo'+uc+'Wv').textContent=cfg['logo_'+lc+'_w'];}
-    if(cfg['logo_'+lc+'_op']!=null){const cop=cfg['logo_'+lc+'_op'];setV('logo'+uc+'Op',Math.round(cop*100));$('logo'+uc+'Opv').textContent=cop.toFixed(2);}
-    if(cfg['logo_'+lc+'_x']!=null)setV('logo'+uc+'X',cfg['logo_'+lc+'_x']);
-    if(cfg['logo_'+lc+'_y']!=null)setV('logo'+uc+'Y',cfg['logo_'+lc+'_y']);
-  });
-  // Chữ watermark
-  if(cfg.enable_center!=null)setTgl('tglCenter',cfg.enable_center);
-  if(cfg.center_text!=null)setV('centerText',cfg.center_text);
-  if(cfg.center_size!=null)setV('centerSize',cfg.center_size);
-  if(cfg.center_opacity!=null)setV('centerOpacity',cfg.center_opacity);
-  // text_bottom_left / text_top_right preserved in data but have no dedicated UI input
+  applyConfig(cfg);          // áp dụng toàn bộ settings
   _activeOpt=name;
-  updateCudaHint();
-  // Highlight pill active
-  document.querySelectorAll('.qopt-pill').forEach(p=>p.classList.toggle('active',p.dataset.name===name));
-  log('✓ Logo option: '+name,'ok');
+  $('optDelBtn').style.display='';
+  log('✓ Option: '+name,'ok');
 }
 
-async function saveLogoOption(){
-  const name=($('qoptName').value||'').trim();
-  if(!name){log('Nhập tên option trước!','warn');return;}
+async function saveOption(){
+  const name=($('optName').value||'').trim();
+  if(!name){log('Nhập tên option!','warn');$('optName').focus();return;}
   const ok=await pywebview.api.save_logo_option(_currentPreset(),name,JSON.stringify(getConfig()));
   if(ok){
-    _activeOpt=name;$('qoptName').value='';
-    await refreshLogoOptions();
-    log('✓ Đã lưu option "'+name+'"','ok');
+    _activeOpt=name;$('optName').value='';
+    await refreshOptions();
+    $('optSel').value=name;
+    $('optDelBtn').style.display='';
+    log('✓ Lưu option "'+name+'"','ok');
   }else{log('✗ Lưu option thất bại','err');}
+}
+
+async function deleteCurrentOption(){
+  const name=$('optSel').value||_activeOpt;
+  if(!name)return;
+  if(!confirm('Xóa option "'+name+'"?'))return;
+  await pywebview.api.delete_logo_option(_currentPreset(),name);
+  _activeOpt='';$('optDelBtn').style.display='none';
+  await refreshOptions();
+  log('Đã xóa option: '+name,'warn');
 }
 
 // ── Run ──
@@ -1348,7 +1327,7 @@ async function _init(){
     const cfg=await pywebview.api.load_preset($('presetSel').value||'Fix ảnh');
     if(cfg)applyConfig(cfg);
   }catch(e){}
-  await refreshLogoOptions();
+  await refreshOptions();
   setInterval(_ffPoll,400);
   updateCudaHint();
   log('Watermark Studio v7 sẵn sàng 🚀','ok');

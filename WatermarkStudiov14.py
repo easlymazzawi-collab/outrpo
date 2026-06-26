@@ -1895,17 +1895,16 @@ class Api:
         opts = data.get("logo_options", {}).get(preset_name, {})
         return {"names": list(opts.keys()), "options": opts}
 
-    def save_logo_option(self, preset_name, option_name, logo_cfg_json):
-        """Lưu tùy chọn logo (chỉ các key logo) cho preset."""
+    def save_logo_option(self, preset_name, option_name, full_cfg_json):
+        """Lưu toàn bộ config hiện tại như một option nhỏ của preset."""
         try:
-            full_cfg = json.loads(logo_cfg_json)
-            logo_cfg = {k: full_cfg[k] for k in LOGO_OPTION_KEYS if k in full_cfg}
+            cfg = json.loads(full_cfg_json)
             data = self._load_data()
             if "logo_options" not in data:
                 data["logo_options"] = {}
             if preset_name not in data["logo_options"]:
                 data["logo_options"][preset_name] = {}
-            data["logo_options"][preset_name][option_name] = logo_cfg
+            data["logo_options"][preset_name][option_name] = cfg
             return self._save_data(data)
         except Exception:
             return False
