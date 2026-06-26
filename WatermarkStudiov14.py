@@ -210,7 +210,8 @@ DEFAULT_CONFIG = {
     "output_folder": "output_videos",
     "output_suffix": "_vnclip",
     "logo_image":    "logo.png",
-    "font_file":     "C:/Windows/Fonts/arial.ttf",
+    "font_file":     (r"C:/Windows/Fonts/arial.ttf" if sys.platform == "win32"
+                     else "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"),
     # Logo PNG — goc man hinh, vi tri dung margin
     "logo_scale_w":  160,
     "logo_opacity":  0.7,
@@ -516,11 +517,6 @@ def _get_rotation(ffprobe, path):
     return 0
 
 
-    if not os.path.exists(path):
-        return False
-    sz = os.path.getsize(path)
-    return sz > 0 if is_img else sz / 1024 >= min_kb
-
 def _is_valid(path, min_kb, is_img=False):
     if not os.path.exists(path):
         return False
@@ -529,6 +525,18 @@ def _is_valid(path, min_kb, is_img=False):
 
 TEN_BIT = {"yuv420p10le","yuv420p10be","yuv422p10le","yuv422p10be",
            "yuv444p10le","yuv444p10be","p010le","p010be"}
+
+# Fields that belong to a "logo option" (quick-switch sub-preset).
+LOGO_OPTION_KEYS = [
+    "logo_image","logo_scale_w","logo_opacity","logo_margin_x","logo_margin_y",
+    "enable_tl","logo_tl","logo_tl_w","logo_tl_op","logo_tl_x","logo_tl_y",
+    "enable_tr","logo_tr","logo_tr_w","logo_tr_op","logo_tr_x","logo_tr_y",
+    "enable_bl","logo_bl","logo_bl_w","logo_bl_op","logo_bl_x","logo_bl_y",
+    "enable_br","logo_br","logo_br_w","logo_br_op","logo_br_x","logo_br_y",
+    "enable_center","center_text","center_size","center_opacity",
+    "text_bottom_left","bottom_left_size","text_top_right","top_right_size",
+    "font_file",
+]
 
 # ==============================================================================
 #  FILTER BUILDERS
@@ -547,30 +555,84 @@ def _bounce(speed, margin, dim, tdim):
     return (f"{margin}+({dim}-{tdim}-{2*margin})"
             f"*abs(mod(t*{speed}/({dim}-{tdim}-{2*margin})\\,2)-1)")
 
+def _escape_font(font):
+    """Escape Windows drive-letter colon so FFmpeg filter parser does not split on it.
+
+    FFmpeg's filter option syntax uses ':' as the key=value separator, so a path
+    like ``C:/Windows/Fonts/arial.ttf`` is misread as ``fontfile=C`` followed by
+    the unknown option ``/Windows/...``.  Replacing the drive colon with ``\\:``
+    tells FFmpeg to treat it as a literal character.
+    """
+    if len(font) >= 2 and font[1] == ':':
+        return font[0] + '\\:' + font[2:]
+    return font
+
+def _default_font():
+    """Return a usable font path for the current platform."""
+    if sys.platform == "win32":
+        return r"C:/Windows/Fonts/arial.ttf"
+    candidates = [
+        "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+        "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf",
+        "/usr/share/fonts/truetype/freefont/FreeSans.ttf",
+    ]
+    for c in candidates:
+        if os.path.exists(c):
+            return c
+    return candidates[0]
+
 def _drawtext(font, txt, color, size, x, y, ec=""):
-    return (f"drawtext=fontfile='{font}':text='{txt}':"
+    ef = _escape_font(font)
+    return (f"drawtext=fontfile='{ef}':text='{txt}':"
             f"fontsize={size}:fontcolor={color}:x={x}:y={y}{ec}")
 
 def build_filter_complex(cfg, is_img, cut=None):
-    font = cfg["font_file"]
-    et   = cfg["enable_time"]
-    m    = cfg["position_margin"]
+    """Build CPU-path filter_complex string supporting main logo + 4-corner logos.
+
+    Returns: (filter_complex_str, [logo_path, ...])
+    The returned list of paths must be added as sequential -i inputs after the
+    main video input (index 1, 2, 3 … match [1:v], [2:v], [3:v] …).
+    """
+    font = _escape_font(cfg["font_file"])
+    et   = (cfg.get("enable_time") or 0) if not is_img else 0
+    m    = cfg.get("position_margin", 30)
 
     # Enable clauses
     if cut is not None:
         ec_logo = f":enable='between(t,0,{cut})'"
         ec_text = f":enable='between(t,{et},{cut})'"
     elif not is_img:
-        ec_logo = ""
+        # ec_logo: logo appear after enable_time (mirrors fast-mode tpad delay)
+        ec_logo = f":enable='gte(t,{et})'" if et and et > 0 else ""
         ec_text = f":enable='gte(t,{et})'"
     else:
         ec_logo = ec_text = ""
 
-    # Logo PNG: luon goc, dung margin
+    # ── Collect logos in order: main logo first, then 4 corners ──────────────
     lx = str(cfg.get("logo_margin_x", 15))
     ly = str(cfg.get("logo_margin_y", 15))
+    logo_list = []  # (path, scale_w, opacity, x_expr, y_expr)
+    if os.path.isfile(cfg.get("logo_image", "")):
+        logo_list.append((cfg["logo_image"], cfg.get("logo_scale_w", 160),
+                          cfg.get("logo_opacity", 0.7), lx, ly))
 
-    # Chu center watermark
+    def _cx(c): return str(cfg.get(f"logo_{c}_x", int(lx)))
+    def _cy(c): return str(cfg.get(f"logo_{c}_y", int(ly)))
+    corner_defs = [
+        ("enable_tl","logo_tl","logo_tl_w","logo_tl_op",
+         _cx("tl"), _cy("tl")),
+        ("enable_tr","logo_tr","logo_tr_w","logo_tr_op",
+         f"main_w-overlay_w-{_cx('tr')}", _cy("tr")),
+        ("enable_bl","logo_bl","logo_bl_w","logo_bl_op",
+         _cx("bl"), f"main_h-overlay_h-{_cy('bl')}"),
+        ("enable_br","logo_br","logo_br_w","logo_br_op",
+         f"main_w-overlay_w-{_cx('br')}", f"main_h-overlay_h-{_cy('br')}"),
+    ]
+    for en_k, p_k, w_k, op_k, ox, oy in corner_defs:
+        if cfg.get(en_k) and os.path.isfile(cfg.get(p_k, "")):
+            logo_list.append((cfg[p_k], cfg.get(w_k, 120), cfg.get(op_k, 0.7), ox, oy))
+
+    # ── Text watermark layers ─────────────────────────────────────────────────
     center_fade = cfg.get("enable_center_fade", False)
     if is_img:
         cx, cy = "(w-tw)/2", "(h-th)/2"
@@ -584,44 +646,61 @@ def build_filter_complex(cfg, is_img, cut=None):
         alpha = _alpha_expr(et, cfg["fade_in"], cfg["hold"],
                             cfg["fade_out"], cfg["hide_duration"], cfg.get("center_opacity", 0.15))
     else:
-        cx    = "(w-tw)/4"
+        cx    = "(w-tw)/2"
         cy    = "(h-th)/2"
         alpha = str(cfg.get("center_opacity", 0.15))
 
     ct = cfg.get("center_text", "")
     cz = cfg.get("center_size", 25)
-    layers = []
+    text_layers = []
     if ct:
-        ct_layer = (f"drawtext=fontfile='{font}':text='{ct}':"
-                   f"fontsize={cz}:fontcolor=white:alpha='{alpha}':x={cx}:y={cy}{ec_text}")
-        layers.append(ct_layer)
+        text_layers.append(
+            f"drawtext=fontfile='{font}':text='{ct}':"
+            f"fontsize={cz}:fontcolor=white:alpha='{alpha}':x={cx}:y={cy}{ec_text}"
+        )
     if cfg.get("enable_dvd") and not is_img:
         dx = _bounce(cfg["dvd_speed_x"], cfg["dvd_margin"], "w", "tw")
         dy = _bounce(cfg["dvd_speed_y"], cfg["dvd_margin"], "h", "th")
-        layers.append(_drawtext(font, cfg["dvd_text"],
-                                f"white@{cfg['dvd_opacity']}", cfg["dvd_size"], dx, dy, ec_text))
-
-    layers.append(_drawtext(font, cfg.get("text_bottom_left",""),
-                            cfg.get("bottom_left_color","white"), cfg.get("bottom_left_size",22), "10", "h-th-10", ec_text))
-    layers.append(_drawtext(font, cfg.get("text_top_right",""),
-                            cfg.get("top_right_color","white"), cfg.get("top_right_size",22), "w-tw-10", "10", ec_text))
-
+        text_layers.append(_drawtext(font, cfg["dvd_text"],
+                            f"white@{cfg['dvd_opacity']}", cfg["dvd_size"], dx, dy, ec_text))
+    text_layers.append(_drawtext(font, cfg.get("text_bottom_left",""),
+                        cfg.get("bottom_left_color","white"), cfg.get("bottom_left_size",22),
+                        "10", "h-th-10", ec_text))
+    text_layers.append(_drawtext(font, cfg.get("text_top_right",""),
+                        cfg.get("top_right_color","white"), cfg.get("top_right_size",22),
+                        "w-tw-10", "10", ec_text))
     if cfg.get("enable_moving") and not is_img:
-        mx = r"mod(t*40\,w+tw)-tw"
-        layers.append(_drawtext(font, cfg["moving_text"],
-                                f"white@{cfg['moving_opacity']}", cfg["moving_size"], mx, "h-th-50", ec_text))
-
+        mx_expr = r"mod(t*40\,w+tw)-tw"
+        text_layers.append(_drawtext(font, cfg["moving_text"],
+                            f"white@{cfg['moving_opacity']}", cfg["moving_size"],
+                            mx_expr, "h-th-50", ec_text))
     if cfg.get("enable_bouncing") and not is_img:
-        layers.append(_drawtext(font, cfg["bouncing_text"],
-                                f"white@{cfg['bouncing_opacity']}", cfg["bouncing_size"],
-                                "30", r"80+sin(t*2)*15", ec_text))
+        text_layers.append(_drawtext(font, cfg["bouncing_text"],
+                            f"white@{cfg['bouncing_opacity']}", cfg["bouncing_size"],
+                            "30", r"80+sin(t*2)*15", ec_text))
 
-    dt   = ",".join(layers)
-    logo = f"[1:v]scale={cfg['logo_scale_w']}:-1,colorchannelmixer=aa={cfg['logo_opacity']}[logo]"
-    ov   = f"[0:v][logo]overlay=x={lx}:y={ly}{ec_logo}"
-    # format=yuv420p o CUOI: ep ve 8-bit -> video 10-bit/HDR khong lam h264_nvenc
-    # bao loi -22 (Invalid argument / Conversion failed).
-    return f"{logo};{ov},{dt},format=yuv420p"
+    text_chain = (",".join(text_layers) + "," if text_layers else "") + "format=yuv420p"
+
+    # ── Assemble filter graph ─────────────────────────────────────────────────
+    # Scale/opacity chains for each logo (labeled outputs [wml0], [wml1], …)
+    graph_parts = []
+    for i, (lpath, lw, lop, ox, oy) in enumerate(logo_list):
+        graph_parts.append(
+            f"[{i+1}:v]scale={lw}:-1,colorchannelmixer=aa={lop}[wml{i}]"
+        )
+
+    # Overlay chain: each logo overlaid in sequence
+    stream = "[0:v]"
+    for i, (lpath, lw, lop, ox, oy) in enumerate(logo_list):
+        out = f"wmv{i}"
+        graph_parts.append(f"{stream}[wml{i}]overlay=x={ox}:y={oy}{ec_logo}[{out}]")
+        stream = f"[{out}]"
+
+    # Final node: last overlay output feeds into text → format=yuv420p
+    graph_parts.append(f"{stream}{text_chain}")
+
+    logo_paths = [lpath for lpath, *_ in logo_list]
+    return ";".join(graph_parts), logo_paths
 
 def _has_dynamic_wm(cfg):
     """Co bat hieu ung dong khong? Neu co -> buoc dung drawtext CPU (build_video_cmd),
@@ -647,16 +726,16 @@ def _audio_args(norm_audio):
         return ["-c:a", "aac", "-ar", "48000", "-ac", "2", "-b:a", "160k"]
     return ["-c:a", "copy"]
 
-def build_video_cmd(cfg, inp, outp, fc, trim=None, dur_limit=None, norm_audio=False):
+def build_video_cmd(cfg, inp, outp, fc, logo_paths=None, trim=None, dur_limit=None, norm_audio=False):
     ss     = ["-ss", str(trim)] if trim and trim > 0 else []
     t_args = ["-t", str(dur_limit)] if dur_limit is not None else []
-    # Decode tren GPU de giai phong CPU cho cac job song song.
-    # Khong dung hwaccel_output_format=cuda vi drawtext la filter CPU,
-    # can frame o system memory; chi decode bang GPU roi tu dong tai ve.
+    extra_i = []
+    for p in (logo_paths or []):
+        extra_i += ["-i", p]
     return [
         cfg["ffmpeg_path"], "-hide_banner",
         "-hwaccel", "cuda",
-        *ss, "-i", inp, "-i", cfg["logo_image"],
+        *ss, "-i", inp, *extra_i,
         "-filter_complex", fc,
         "-filter_threads", str(int(cfg.get("filter_threads", 8))),
         "-map", "0:v:0", "-map", "0:a:0?",
@@ -800,6 +879,7 @@ def build_fast_cmd(cfg, inp, outp, wm_png=None, trim=None, dur_limit=None, norm_
         # Dung khi co center text (drawtext la CPU filter,
         # khong chay duoc tren cuda frame).
         # ============================================================
+        ec_b = f":enable='gte(t,{et})'" if et and et > 0 else ""
         stream_in = "[0:v]"
         for i, (lpath, lw, lop, ox, oy) in enumerate(logo_list):
             idx = i + 1
@@ -808,13 +888,15 @@ def build_fast_cmd(cfg, inp, outp, wm_png=None, trim=None, dur_limit=None, norm_
             extra_inputs += ["-i", lpath]
             fc_parts.append(
                 f"[{idx}:v]scale={lw}:-1,format=rgba,"
-                f"colorchannelmixer=aa={lop}[{lbl}];"
-                f"{stream_in}[{lbl}]overlay=x={ox}:y={oy}{ec}[{out}]"
+                f"colorchannelmixer=aa={lop}[{lbl}]"
+            )
+            fc_parts.append(
+                f"{stream_in}[{lbl}]overlay=x={ox}:y={oy}{ec_b}[{out}]"
             )
             stream_in = f"[{out}]"
 
         if cfg.get("enable_center") and cfg.get("center_text", "").strip():
-            font = cfg.get("font_file", "C:/Windows/Fonts/arial.ttf")
+            font = _escape_font(cfg.get("font_file", _default_font()))
             txt  = cfg["center_text"].replace("'", "\'")
             op   = cfg.get("center_opacity", 0.15)
             sz   = cfg.get("center_size", 28)
@@ -876,16 +958,16 @@ def fast_cuda_supported(cfg):
         _FAST_CUDA_MODE = 0
     return _FAST_CUDA_OK
 
-def build_cpu_cmd(cfg, inp, outp, fc, trim=None, dur_limit=None, norm_audio=False):
-    """Encode bang libx264 tren CPU. Dung cho CPU worker (hybrid pool).
-    Decode + filter + encode deu tren CPU — khong dung NVENC/NVDEC,
-    nen chay song song duoc voi cac job GPU ma khong tranh chip encode.
-    """
+def build_cpu_cmd(cfg, inp, outp, fc, logo_paths=None, trim=None, dur_limit=None, norm_audio=False):
+    """Encode bang libx264 tren CPU. Dung cho CPU worker (hybrid pool)."""
     ss     = ["-ss", str(trim)] if trim and trim > 0 else []
     t_args = ["-t", str(dur_limit)] if dur_limit is not None else []
+    extra_i = []
+    for p in (logo_paths or []):
+        extra_i += ["-i", p]
     return [
         cfg["ffmpeg_path"], "-hide_banner",
-        *ss, "-i", inp, "-i", cfg["logo_image"],
+        *ss, "-i", inp, *extra_i,
         "-filter_complex", fc,
         "-filter_threads", str(int(cfg.get("filter_threads", 4))),
         "-map", "0:v:0", "-map", "0:a:0?",
@@ -896,7 +978,7 @@ def build_cpu_cmd(cfg, inp, outp, fc, trim=None, dur_limit=None, norm_audio=Fals
         *_audio_args(norm_audio), "-movflags", "+faststart", "-y", outp,
     ]
 
-def encode_segment(cfg, ffprobe_p, inp, outp, fc, trim=None, dur_limit=None, use_gpu=True):
+def encode_segment(cfg, ffprobe_p, inp, outp, fc, logo_paths=None, trim=None, dur_limit=None, use_gpu=True):
     """Encode 1 segment.
       - use_gpu=False -> libx264 CPU (cho CPU worker), bo qua fast mode.
       - use_gpu=True  -> tu dong chon:
@@ -925,7 +1007,7 @@ def encode_segment(cfg, ffprobe_p, inp, outp, fc, trim=None, dur_limit=None, use
 
     # --- CPU worker: libx264 ---
     if not use_gpu:
-        cmd = build_cpu_cmd(cfg, inp, outp, fc, trim, dur_limit, norm_audio=norm_a)
+        cmd = build_cpu_cmd(cfg, inp, outp, fc, logo_paths, trim, dur_limit, norm_audio=norm_a)
         rc, stderr_txt = _run_ffmpeg(cmd, timeout=enc_to)
         if rc == 0 and _is_valid(outp, min_kb):
             return True, False, ""
@@ -961,7 +1043,7 @@ def encode_segment(cfg, ffprobe_p, inp, outp, fc, trim=None, dur_limit=None, use
                     except: pass
 
     # Lop 2: drawtext + NVENC
-    cmd = build_video_cmd(cfg, inp, outp, fc, trim, dur_limit, norm_audio=norm_a)
+    cmd = build_video_cmd(cfg, inp, outp, fc, logo_paths, trim, dur_limit, norm_audio=norm_a)
     rc, stderr_txt = _run_nvenc(cmd, timeout=enc_to)
     if rc == 0 and _is_valid(outp, min_kb):
         return True, False, ""
@@ -972,9 +1054,8 @@ def encode_segment(cfg, ffprobe_p, inp, outp, fc, trim=None, dur_limit=None, use
         except: pass
 
     # Lop 3 (FALLBACK CUOI): NVENC loi (vd het phien encode) -> encode CPU libx264.
-    # Dam bao van ra file thay vi bao loi.
     nv_err = last_err or f"nvenc loi (rc={rc})"
-    cmd = build_cpu_cmd(cfg, inp, outp, fc, trim, dur_limit, norm_audio=norm_a)
+    cmd = build_cpu_cmd(cfg, inp, outp, fc, logo_paths, trim, dur_limit, norm_audio=norm_a)
     rc, stderr_txt = _run_ffmpeg(cmd, timeout=enc_to)
     if rc == 0 and _is_valid(outp, min_kb):
         return True, False, ""
@@ -1796,10 +1877,16 @@ class Api:
         try:
             with open(CONFIG_PATH, "r", encoding="utf-8") as f:
                 data = json.load(f)
-            last = data.get("last_preset", "Default")
+            last = data.get("last_preset", list(PRESETS.keys())[0])
+            saved_names = list(data.get("presets", {}).keys())
         except Exception:
-            last = "Default"
+            last = list(PRESETS.keys())[0]
+            saved_names = []
+        # Hardcoded presets first, then user-created ones not already listed
         names = list(PRESETS.keys())
+        for n in saved_names:
+            if n not in names:
+                names.append(n)
         return {"names": names, "last_preset": last}
     def load_preset(self, name):
         """Load preset: ưu tiên từ file lưu, fallback về hardcode."""
@@ -1816,7 +1903,6 @@ class Api:
     def save_config(self, preset_name, cfg_json):
         try:
             cfg = json.loads(cfg_json)
-            # Load file hiện tại nếu có
             try:
                 with open(CONFIG_PATH, "r", encoding="utf-8") as f:
                     data = json.load(f)
@@ -1831,6 +1917,61 @@ class Api:
             return True
         except Exception:
             return False
+
+    # ── Logo quick-options (sub-preset) ──────────────────────────────────────
+
+    def _load_data(self):
+        try:
+            with open(CONFIG_PATH, "r", encoding="utf-8") as f:
+                return json.load(f)
+        except Exception:
+            return {}
+
+    def _save_data(self, data):
+        try:
+            with open(CONFIG_PATH, "w", encoding="utf-8") as f:
+                json.dump(data, f, ensure_ascii=False, indent=2)
+            return True
+        except Exception:
+            return False
+
+    def get_logo_options(self, preset_name):
+        """Trả về danh sách tùy chọn logo của preset hiện tại."""
+        data = self._load_data()
+        opts = data.get("logo_options", {}).get(preset_name, {})
+        return {"names": list(opts.keys()), "options": opts}
+
+    def save_logo_option(self, preset_name, option_name, full_cfg_json):
+        """Lưu toàn bộ config hiện tại như một option nhỏ của preset."""
+        try:
+            cfg = json.loads(full_cfg_json)
+            data = self._load_data()
+            if "logo_options" not in data:
+                data["logo_options"] = {}
+            if preset_name not in data["logo_options"]:
+                data["logo_options"][preset_name] = {}
+            data["logo_options"][preset_name][option_name] = cfg
+            return self._save_data(data)
+        except Exception:
+            return False
+
+    def delete_logo_option(self, preset_name, option_name):
+        """Xóa một tùy chọn logo."""
+        try:
+            data = self._load_data()
+            opts = data.get("logo_options", {}).get(preset_name, {})
+            if option_name in opts:
+                del opts[option_name]
+                data.setdefault("logo_options", {})[preset_name] = opts
+                return self._save_data(data)
+            return False
+        except Exception:
+            return False
+
+    def load_logo_option(self, preset_name, option_name):
+        """Trả về logo cfg của một option cụ thể."""
+        data = self._load_data()
+        return data.get("logo_options", {}).get(preset_name, {}).get(option_name, {})
 
     def get_ffmpeg_log_since(self, offset):
         lines = _ffmpeg_log_lines
@@ -2275,8 +2416,11 @@ class Api:
             if is_img:
                 # Anh luon encode nhanh bang 1 frame, khong phan biet GPU/CPU
                 outp = os.path.join(out_dir, name + suffix + ".jpg")
-                fc   = build_filter_complex(cfg, is_img=True)
-                cmd  = [ff, "-hide_banner", "-i", inp, "-i", cfg["logo_image"],
+                fc, logo_paths = build_filter_complex(cfg, is_img=True)
+                extra_i = []
+                for p in logo_paths:
+                    extra_i += ["-i", p]
+                cmd  = [ff, "-hide_banner", "-i", inp, *extra_i,
                         "-filter_complex", fc,
                         "-filter_threads", str(int(cfg.get("filter_threads", 4))),
                         "-frames:v", "1", "-update", "1", "-y", outp]
@@ -2301,11 +2445,11 @@ class Api:
                         if thr > 0 and duration and duration > thr:
                             raw = (p_limit or (duration - (p_start or 0))) * ratio
                             cut = round(raw, 2)
-                        fc_p   = build_filter_complex(cfg, is_img=False, cut=cut)
+                        fc_p, logo_paths = build_filter_complex(cfg, is_img=False, cut=cut)
                         wm_tmp = (os.path.join(tmp_dir, f"wm_{abs(hash(p_outp))}.mp4")
                                   if cfg.get("enable_outro") else p_outp)
                         s, fast, reason = encode_segment(cfg, ffprobe_p, inp, wm_tmp, fc_p,
-                                                         p_start, p_limit, use_gpu=use_gpu)
+                                                         logo_paths, p_start, p_limit, use_gpu=use_gpu)
                         if not s and reason:
                             fail_reason = reason
                         tag = " [⚡fast]" if fast else (" [x264]" if not use_gpu else "")

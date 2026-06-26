@@ -170,6 +170,26 @@ input[type=range]:hover::-webkit-slider-thumb{box-shadow:0 0 6px var(--acglow)}
 .hs-pill .sw::after{width:8px;height:8px;top:3px;left:3px}
 .hs-pill .sw.on::after{left:15px}
 
+/* ── Option topbar (always-visible) ── */
+.opt-sep{width:1px;height:18px;background:var(--line2);margin:0 4px}
+.opt-wrap{display:flex;align-items:center;gap:4px}
+.opt-wrap label{font-size:10px;color:var(--tx3);text-transform:uppercase;font-weight:600;white-space:nowrap}
+#optSel{background:var(--panel2);border:1px solid var(--line);border-radius:20px;
+  padding:3px 9px;color:var(--tx);font-size:11px;outline:none;cursor:pointer;max-width:130px}
+#optSel option{background:var(--panel2)}
+.opt-add{display:flex;align-items:center;gap:0;border:1px solid var(--line);
+  border-radius:20px;overflow:hidden;height:24px}
+.opt-add input{background:var(--panel2);border:none;padding:0 8px;color:var(--tx);
+  font-size:11px;outline:none;width:100px;font-family:inherit}
+.opt-add input::placeholder{color:var(--tx3)}
+.opt-add button{background:rgba(255,140,66,.15);border:none;border-left:1px solid var(--line);
+  color:var(--ora);padding:0 9px;font-size:11px;cursor:pointer;height:100%;
+  font-family:inherit;white-space:nowrap;transition:.12s}
+.opt-add button:hover{background:rgba(255,140,66,.28)}
+.opt-del{background:transparent;border:1px solid transparent;border-radius:20px;
+  color:var(--tx3);padding:2px 6px;font-size:11px;cursor:pointer;transition:.12s}
+.opt-del:hover{color:var(--red);border-color:rgba(255,95,114,.3)}
+
 /* ── Content area ── */
 .content{display:flex;flex-direction:column;flex:1;overflow:hidden;background:var(--bg)}
 .actions{display:flex;align-items:center;gap:6px;padding:8px 12px;
@@ -276,10 +296,28 @@ input[type=range]:hover::-webkit-slider-thumb{box-shadow:0 0 6px var(--acglow)}
     <div class="name">Watermark Studio</div>
     <div class="ver">v7</div>
   </div>
+
+  <!-- Preset selector -->
   <div style="display:flex;align-items:center;gap:5px;margin-left:6px">
     <label style="font-size:10px;color:var(--tx3);text-transform:uppercase;font-weight:600">Preset</label>
     <select id="presetSel" onchange="applyPreset()"></select>
   </div>
+
+  <!-- Option selector (always visible) -->
+  <div class="opt-sep"></div>
+  <div class="opt-wrap">
+    <label>Option</label>
+    <select id="optSel" onchange="applyOptionFromSel()">
+      <option value="">— chọn —</option>
+    </select>
+    <button class="opt-del" id="optDelBtn" onclick="deleteCurrentOption()" title="Xóa option" style="display:none">✕</button>
+    <div class="opt-add">
+      <input id="optName" placeholder="Tên option…" maxlength="30"
+        onkeydown="if(event.key==='Enter')saveOption()">
+      <button onclick="saveOption()">💾 Lưu</button>
+    </div>
+  </div>
+
   <div class="pipeline-tag">overlay_cuda AUTO</div>
   <div class="grow"></div>
   <div class="tbtn" onclick="openFflog()">📋 Log</div>
@@ -442,7 +480,7 @@ input[type=range]:hover::-webkit-slider-thumb{box-shadow:0 0 6px var(--acglow)}
         </div>
         <div class="fld"><label>Font chữ</label>
           <div class="with-btn">
-            <input id="fontFile" value="C:/Windows/Fonts/arial.ttf" style="font-size:10px">
+            <input id="fontFile" placeholder="(dùng mặc định hệ thống)" style="font-size:10px">
             <button class="mini" onclick="pickFont()">Chọn</button></div></div>
       </div>
     </div>
@@ -1002,7 +1040,7 @@ function applyConfig(c){
   setV('logoOp',Math.round(op*100));$('logoOpVal').textContent=op.toFixed(2);
   setV('marginX',c.logo_margin_x!=null?c.logo_margin_x:15);
   setV('marginY',c.logo_margin_y!=null?c.logo_margin_y:15);
-  setV('fontFile',c.font_file||'C:/Windows/Fonts/arial.ttf');
+  setV('fontFile',c.font_file||'');
   // 4 góc
   const corners=[
     ['TL','tl'],['TR','tr'],['BL','bl'],['BR','br']
@@ -1088,12 +1126,71 @@ async function applyPreset(){
   const name=$('presetSel').value;
   const cfg=await pywebview.api.load_preset(name);
   if(cfg)applyConfig(cfg);
+  _activeOpt='';
+  await refreshOptions();
   log('Nạp preset: '+name,'ok');
 }
 async function saveConfig(){
   const name=$('presetSel').value;
   const ok=await pywebview.api.save_config(name,JSON.stringify(getConfig()));
   log(ok?'✓ Lưu preset: '+name:'✗ Lưu thất bại',ok?'ok':'err');
+}
+
+// ── Options (full-config sub-presets) ─────────────────────────────────────
+let _activeOpt='';
+function _currentPreset(){return $('presetSel').value||'';}
+
+async function refreshOptions(){
+  const sel=$('optSel');
+  const prev=sel.value;
+  sel.innerHTML='<option value="">— chọn —</option>';
+  try{
+    const res=await pywebview.api.get_logo_options(_currentPreset());
+    if(res&&res.names.length){
+      res.names.forEach(n=>{
+        const o=document.createElement('option');
+        o.value=n;o.textContent=n;
+        if(n===_activeOpt||n===prev)o.selected=true;
+        sel.appendChild(o);
+      });
+    }
+  }catch(e){}
+  const hasActive=_activeOpt&&[...$('optSel').options].some(o=>o.value===_activeOpt);
+  $('optDelBtn').style.display=hasActive?'':'none';
+}
+
+async function applyOptionFromSel(){
+  const name=$('optSel').value;
+  if(!name){_activeOpt='';$('optDelBtn').style.display='none';return;}
+  const cfg=await pywebview.api.load_logo_option(_currentPreset(),name);
+  if(!cfg||!Object.keys(cfg).length){log('Option rỗng: '+name,'warn');return;}
+  applyConfig(cfg);          // áp dụng toàn bộ settings
+  _activeOpt=name;
+  $('optDelBtn').style.display='';
+  log('✓ Option: '+name,'ok');
+}
+
+async function saveOption(){
+  const name=($('optName').value||'').trim();
+  if(!name){log('Nhập tên option!','warn');$('optName').focus();return;}
+  const ok=await pywebview.api.save_logo_option(_currentPreset(),name,JSON.stringify(getConfig()));
+  if(ok){
+    _activeOpt=name;$('optName').value='';
+    await refreshOptions();
+    $('optSel').value=name;
+    $('optDelBtn').style.display='';
+    log('✓ Lưu option "'+name+'"','ok');
+  }else{log('✗ Lưu option thất bại','err');}
+}
+
+async function deleteCurrentOption(){
+  const name=$('optSel').value||_activeOpt;
+  if(!name)return;
+  if(!confirm('Xóa option "'+name+'"?'))return;
+  await pywebview.api.delete_logo_option(_currentPreset(),name);
+  _activeOpt='';$('optDelBtn').style.display='none';
+  await refreshOptions();
+  log('Đã xóa option: '+name,'warn');
 }
 
 // ── Run ──
@@ -1230,6 +1327,7 @@ async function _init(){
     const cfg=await pywebview.api.load_preset($('presetSel').value||'Fix ảnh');
     if(cfg)applyConfig(cfg);
   }catch(e){}
+  await refreshOptions();
   setInterval(_ffPoll,400);
   updateCudaHint();
   log('Watermark Studio v7 sẵn sàng 🚀','ok');
