@@ -210,7 +210,8 @@ DEFAULT_CONFIG = {
     "output_folder": "output_videos",
     "output_suffix": "_vnclip",
     "logo_image":    "logo.png",
-    "font_file":     "C:/Windows/Fonts/arial.ttf",
+    "font_file":     (r"C:/Windows/Fonts/arial.ttf" if sys.platform == "win32"
+                     else "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"),
     # Logo PNG — goc man hinh, vi tri dung margin
     "logo_scale_w":  160,
     "logo_opacity":  0.7,
@@ -547,12 +548,39 @@ def _bounce(speed, margin, dim, tdim):
     return (f"{margin}+({dim}-{tdim}-{2*margin})"
             f"*abs(mod(t*{speed}/({dim}-{tdim}-{2*margin})\\,2)-1)")
 
+def _escape_font(font):
+    """Escape Windows drive-letter colon so FFmpeg filter parser does not split on it.
+
+    FFmpeg's filter option syntax uses ':' as the key=value separator, so a path
+    like ``C:/Windows/Fonts/arial.ttf`` is misread as ``fontfile=C`` followed by
+    the unknown option ``/Windows/...``.  Replacing the drive colon with ``\\:``
+    tells FFmpeg to treat it as a literal character.
+    """
+    if len(font) >= 2 and font[1] == ':':
+        return font[0] + '\\:' + font[2:]
+    return font
+
+def _default_font():
+    """Return a usable font path for the current platform."""
+    if sys.platform == "win32":
+        return r"C:/Windows/Fonts/arial.ttf"
+    candidates = [
+        "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+        "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf",
+        "/usr/share/fonts/truetype/freefont/FreeSans.ttf",
+    ]
+    for c in candidates:
+        if os.path.exists(c):
+            return c
+    return candidates[0]
+
 def _drawtext(font, txt, color, size, x, y, ec=""):
-    return (f"drawtext=fontfile='{font}':text='{txt}':"
+    ef = _escape_font(font)
+    return (f"drawtext=fontfile='{ef}':text='{txt}':"
             f"fontsize={size}:fontcolor={color}:x={x}:y={y}{ec}")
 
 def build_filter_complex(cfg, is_img, cut=None):
-    font = cfg["font_file"]
+    font = _escape_font(cfg["font_file"])
     et   = cfg["enable_time"]
     m    = cfg["position_margin"]
 
@@ -593,7 +621,7 @@ def build_filter_complex(cfg, is_img, cut=None):
     layers = []
     if ct:
         ct_layer = (f"drawtext=fontfile='{font}':text='{ct}':"
-                   f"fontsize={cz}:fontcolor=white:alpha='{alpha}':x={cx}:y={cy}{ec_text}")
+                    f"fontsize={cz}:fontcolor=white:alpha='{alpha}':x={cx}:y={cy}{ec_text}")
         layers.append(ct_layer)
     if cfg.get("enable_dvd") and not is_img:
         dx = _bounce(cfg["dvd_speed_x"], cfg["dvd_margin"], "w", "tw")
@@ -814,7 +842,7 @@ def build_fast_cmd(cfg, inp, outp, wm_png=None, trim=None, dur_limit=None, norm_
             stream_in = f"[{out}]"
 
         if cfg.get("enable_center") and cfg.get("center_text", "").strip():
-            font = cfg.get("font_file", "C:/Windows/Fonts/arial.ttf")
+            font = _escape_font(cfg.get("font_file", _default_font()))
             txt  = cfg["center_text"].replace("'", "\'")
             op   = cfg.get("center_opacity", 0.15)
             sz   = cfg.get("center_size", 28)
